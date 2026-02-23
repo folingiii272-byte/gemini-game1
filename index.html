@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Relaxed Aim Master</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: 'Segoe UI', sans-serif; touch-action: none; cursor: none; }
+        canvas { display: block; }
+        #ui { position: absolute; top: 15px; left: 15px; color: white; font-size: 18px; pointer-events: none; z-index: 10; text-shadow: 2px 2px 4px #000; }
+        #settings-btn { position: absolute; top: 15px; right: 15px; font-size: 28px; cursor: pointer; background: none; border: none; z-index: 101; }
+        #settings-menu { 
+            position: absolute; top: 60px; right: 15px; background: rgba(0,0,0,0.9); 
+            padding: 15px; border-radius: 8px; color: white; display: none; z-index: 100; border: 1px solid #444; width: 180px;
+        }
+        select { background: #333; color: white; border: 1px solid #555; padding: 8px; margin: 5px 0 15px 0; width: 100%; border-radius: 4px; }
+        #game-over {
+            position: absolute; inset: 0; background: rgba(0,0,0,0.95);
+            display: none; flex-direction: column; justify-content: center;
+            align-items: center; color: white; z-index: 200; cursor: default;
+        }
+        .btn { padding: 15px 30px; font-size: 18px; cursor: pointer; border: none; border-radius: 8px; background: #00ced1; color: #000; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <button id="settings-btn">⚙️</button>
+    <div id="settings-menu">
+        Прицел:
+        <select id="cross-type">
+            <option value="cross">Перекрестие</option>
+            <option value="dot">Точка</option>
+            <option value="circle">Круг</option>
+            <option value="none">Скрыть</option>
+        </select>
+        Форма:
+        <select id="shape-type">
+            <option value="circle">Круг</option>
+            <option value="star">Звезда</option>
+            <option value="heart">Сердце</option>
+        </select>
+    </div>
+
+    <div id="ui">
+        Жизни: <span id="hp" style="color:#ff4d4d">5</span> ❤️ | Счёт: <span id="score">0</span> | Ур: <span id="lvl-ui">1</span>
+    </div>
+
+    <div id="game-over">
+        <h1 style="color:#ff4d4d; font-size: 40px;">GAME OVER</h1>
+        <p id="final-stats" style="font-size: 20px;"></p>
+        <button class="btn" onclick="resetGame()">ИГРАТЬ СНОВА</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    let score = 0, lives = 5, level = 1, gameOver = false;
+    let targets = [], mouse = { x: -100, y: -100 };
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    const drawFns = {
+        circle(x, y, r) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill(); },
+        star(x, y, r) {
+            ctx.beginPath();
+            for(let i=0; i<5; i++) {
+                ctx.lineTo(Math.cos((18+i*72)/180*Math.PI)*r + x, -Math.sin((18+i*72)/180*Math.PI)*r + y);
+                ctx.lineTo(Math.cos((54+i*72)/180*Math.PI)*(r/2) + x, -Math.sin((54+i*72)/180*Math.PI)*(r/2) + y);
+            }
+            ctx.closePath(); ctx.fill();
+        },
+        heart(x, y, r) {
+            ctx.beginPath(); ctx.moveTo(x, y + r/4);
+            ctx.bezierCurveTo(x, y-r/2, x-r, y-r/2, x-r, y+r/4);
+            ctx.bezierCurveTo(x-r, y+r, x, y+r*1.2, x, y+r*1.5);
+            ctx.bezierCurveTo(x, y+r*1.2, x+r, y+r, x+r, y+r/4);
+            ctx.bezierCurveTo(x+r, y-r/2, x, y-r/2, x, y+r/4);
+            ctx.fill();
+        }
+    };
+
+    class Target {
+        constructor() {
+            const isMob = canvas.width < 600;
+            this.radius = isMob ? (30 + Math.random()*15) : (25 + Math.random()*10);
+            this.x = Math.random() * (canvas.width - this.radius * 2) + this.radius;
+            this.y = canvas.height + this.radius;
+            // СУПЕР ЗАМЕДЛЕНИЕ: База 0.5 + очень малый прирост
+            this.speed = 0.5 + (level * 0.25); 
+            this.color = `hsl(${Math.random() * 360}, 70%, 50%)`;
+            this.shape = document.getElementById('shape-type').value;
+        }
+        update() { this.y -= this.speed; }
+        draw() { ctx.fillStyle = this.color; drawFns[this.shape](this.x, this.y, this.radius); }
+    }
+
+    function drawCrosshair() {
+        const type = document.getElementById('cross-type').value;
+        if (type === 'none') return;
+        ctx.strokeStyle = '#00ff00'; ctx.lineWidth = 2;
+        ctx.beginPath();
+        if (type === 'dot') ctx.arc(mouse.x, mouse.y, 2, 0, Math.PI*2);
+        else if (type === 'cross') {
+            ctx.moveTo(mouse.x-12, mouse.y); ctx.lineTo(mouse.x+12, mouse.y);
+            ctx.moveTo(mouse.x, mouse.y-12); ctx.lineTo(mouse.x, mouse.y+12);
+        } else if (type === 'circle') ctx.arc(mouse.x, mouse.y, 12, 0, Math.PI*2);
+        ctx.stroke();
+    }
+
+    function animate() {
+        if (gameOver) return;
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // РЕДКИЙ СПАВН: Шанс уменьшен, чтобы не было завала
+        if (Math.random() < 0.006 + (level * 0.0015)) targets.push(new Target());
+
+        for (let i = targets.length - 1; i >= 0; i--) {
+            let t = targets[i];
+            t.update(); t.draw();
+            if (t.y < -t.radius) { targets.splice(i, 1); lives--; updateUI(); if(lives <= 0) endGame(); }
+        }
+        drawCrosshair();
+        requestAnimationFrame(animate);
+    }
+
+    function updateUI() {
+        document.getElementById('hp').innerText = lives;
+        document.getElementById('score').innerText = score;
+        document.getElementById('lvl-ui').innerText = level;
+        level = Math.floor(score / 15) + 1; // Уровень растет каждые 15 очков
+    }
+
+    function endGame() {
+        gameOver = true; document.body.style.cursor = 'default';
+        document.getElementById('game-over').style.display = 'flex';
+        document.getElementById('final-stats').innerText = `Счёт: ${score} | Уровень: ${level}`;
+    }
+
+    function resetGame() {
+        score = 0; lives = 5; level = 1; targets = []; gameOver = false;
+        document.body.style.cursor = 'none'; document.getElementById('game-over').style.display = 'none';
+        updateUI(); animate();
+    }
+
+    window.addEventListener('pointermove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+    
+    canvas.addEventListener('pointerdown', e => {
+        if (gameOver) return;
+        const x = e.clientX, y = e.clientY;
+        for (let i = targets.length - 1; i >= 0; i--) {
+            let t = targets[i];
+            // БОЛЬШОЙ ХИТБОКС (+20 пикселей прощения за неточность)
+            if (Math.hypot(x - t.x, y - t.y) < t.radius + 20) {
+                targets.splice(i, 1); score++; updateUI(); break;
+            }
+        }
+    });
+
+    const sBtn = document.getElementById('settings-btn');
+    const sMenu = document.getElementById('settings-menu');
+    sBtn.onclick = (e) => {
+        const isShow = sMenu.style.display === 'block';
+        sMenu.style.display = isShow ? 'none' : 'block';
+        document.body.style.cursor = isShow ? 'none' : 'default';
+        e.stopPropagation();
+    };
+    window.onclick = () => { sMenu.style.display = 'none'; if(!gameOver) document.body.style.cursor = 'none'; };
+    sMenu.onclick = (e) => e.stopPropagation();
+
+    animate();
+</script>
+</body>
+</html>
